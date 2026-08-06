@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>평가계획서 AI 자동 검토 시스템</title>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  
+  <style>
+    body { font-family: 'Malgun Gothic', sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; color: #333; }
+    .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    h1 { color: #2c3e50; text-align: center; }
+    
+    .section-box { padding: 20px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #dcdde1; }
+    .upload-section { border: 2px dashed #3498db; background-color: #fbfcff; text-align: center; }
+    .admin-section { background-color: #fff3cd; border: 2px dashed #ffe69c; }
+    
+    #result-box { background-color: #fff; padding: 20px; border: 1px solid #ddd; border-radius: 8px; margin-top: 20px; min-height: 100px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); }
+    
+    textarea { width: 100%; padding: 12px; margin-top: 8px; margin-bottom: 12px; border-radius: 5px; border: 1px solid #ccc; box-sizing: border-box; font-family: inherit; resize: vertical; font-size: 14px; }
+    button { background-color: #3498db; color: white; padding: 12px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 15px; font-weight: bold; width: 100%; transition: 0.3s; }
+    button:hover { background-color: #2980b9; }
+    
+    .status-text { font-size: 13px; color: #e67e22; font-weight: bold; margin-top: 5px; display: none; }
+
+    #loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; justify-content: center; align-items: center; flex-direction: column; color: white; font-size: 18px; }
+    .spinner { border: 6px solid #f3f3f3; border-top: 6px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 15px; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div id="loading-text">AI가 데이터를 심층 분석 중입니다... 잠시만 기다려주세요.</div>
+  </div>
+
+  <div class="container">
+    <h1>📝 평가계획서 AI 검토 시스템</h1>
+    
+    <!-- 💡 관리자용 규정/지침 설정 영역 (파일 + 텍스트 모두 지원) -->
+    <div class="section-box admin-section" id="admin-panel">
+      <label style="font-weight: bold; font-size: 16px; color: #856404;">📋 [관리자용] 검토 기준 지침/규정 설정</label>
+      <p style="font-size: 13px; color: #856404; margin: 5px 0 15px 0;">AI의 절대적 검토 기준이 됩니다. 파일(PDF/HWPX)을 업로드하거나 아래에 직접 텍스트를 입력하세요. (두 가지 동시 사용 가능)</p>
+      
+      <div style="background: white; padding: 10px; border-radius: 5px; margin-bottom: 10px; border: 1px solid #ddd;">
+        <span style="font-size: 14px; font-weight: bold; margin-right: 10px;">📎 지침 파일 업로드:</span>
+        <input type="file" id="guideline-file" accept=".pdf, .hwpx" style="font-size: 14px;">
+        <div id="guideline-status" class="status-text">✅ 지침 파일 텍스트 추출 완료</div>
+      </div>
+
+      <textarea id="guideline-text" placeholder="예: 수행평가 비율은 40% 이상이어야 함. 서술형 평가는 지필고사의 20% 이상 출제해야 함 등..." style="height: 70px;"></textarea>
+    </div>
+
+    <!-- 파일 업로드 영역 (평가계획서 본 파일) -->
+    <div class="section-box upload-section">
+      <label style="font-weight: bold; font-size: 16px; color: #2c3e50;">📄 교사 평가계획서 업로드</label>
+      <p style="font-size: 13px; color: #555; margin: 5px 0 15px 0;">검토받을 PDF 또는 HWPX 형식의 평가계획서를 업로드해주세요.</p>
+      <input type="file" id="file-input" accept=".pdf, .hwpx" style="font-size: 16px;">
+    </div>
+
+    <!-- 1차 & AI 검토 결과 출력 영역 -->
+    <div id="result-box">
+      <div style="color: #888; text-align: center;">파일을 업로드하면 이곳에 상태 및 검토 결과가 나타납니다.</div>
+    </div>
+
+    <!-- AI 추가 요청 및 버튼 영역 -->
+    <div id="ai-section" style="display: none; margin-top: 30px;">
+      <label for="extra-prompt" style="font-weight: bold; font-size: 15px; color: #333;">💡 추가 요청사항 (선택사항)</label>
+      <textarea id="extra-prompt" placeholder="예: 2학년 문학 과목입니다. 서술형 평가 루브릭의 단계별 기준이 명확한지 집중적으로 봐주세요." style="height: 60px;"></textarea>
+      <button id="ai-btn" style="background-color: #27ae60;">🤖 AI에게 심층 검토 요청하기</button>
+    </div>
+
+    <div id="pdf-section" style="display: none; text-align: right; margin-top: 15px;">
+      <button id="pdf-btn" style="background-color: #e74c3c; width: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        📄 전체 검토 결과 PDF로 저장하기
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // ⚠️ 아래 URL을 선생님의 실제 Google Apps Script 웹앱 URL로 변경하세요!
+    const GAS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbwVCfWYQ22mtnaCCOzTVJdWxCBuSHo2Vrv5s2BplWWCct-1MYVXjAVMcNs_dKzF6m3kYA/exec";
+    
+    let currentExtractedText = "";
+    let extractedGuidelineText = ""; // 지침 파일에서 추출한 텍스트 저장용 변수
+
+    // HTML 요소 선택
+    const fileInput = document.getElementById('file-input');
+    const guidelineFile = document.getElementById('guideline-file');
+    const guidelineStatus = document.getElementById('guideline-status');
+    const resultBox = document.getElementById('result-box');
+    const aiSection = document.getElementById('ai-section');
+    const pdfSection = document.getElementById('pdf-section');
+    const aiBtn = document.getElementById('ai-btn');
+    const pdfBtn = document.getElementById('pdf-btn');
+    const loadingOverlay = document.getElementById('loading-overlay');
+
+    // 💡 공통 텍스트 추출 함수 (PDF & HWPX 지원)
+    async function extractTextFromFile(file) {
+      const fileName = file.name.toLowerCase();
+      let extractedText = "";
+
+      if (fileName.endsWith('.pdf')) {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          extractedText += textContent.items.map(item => item.str).join(" ") + "\n";
+        }
+      } else if (fileName.endsWith('.hwpx')) {
+        const zip = new JSZip();
+        const loadedZip = await zip.loadAsync(file);
+        for (let relativePath in loadedZip.files) {
+          if (relativePath.startsWith("Contents/section") && relativePath.endsWith(".xml")) {
+            const xmlContent = await loadedZip.files[relativePath].async("string");
+            extractedText += xmlContent.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ") + "\n";
+          }
+        }
+      } else {
+        throw new Error("지원하지 않는 파일 형식입니다. (.pdf 또는 .hwpx만 가능)");
+      }
+      return extractedText;
+    }
+
+    // [이벤트] 1. 관리자 지침 파일 업로드 시 텍스트 추출
+    guidelineFile.addEventListener('change', async function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      guidelineStatus.style.display = 'block';
+      guidelineStatus.innerText = "⏳ 지침 파일을 읽는 중...";
+      guidelineStatus.style.color = "blue";
+      try {
+        extractedGuidelineText = await extractTextFromFile(file);
+        if(extractedGuidelineText.trim() === "") throw new Error("텍스트 추출 실패");
+        guidelineStatus.innerText = "✅ 지침 파일 텍스트 추출 완료! (AI 검토 시 반영됩니다)";
+        guidelineStatus.style.color = "#27ae60";
+      } catch (error) {
+        guidelineStatus.innerText = "❌ 오류: " + error.message;
+        guidelineStatus.style.color = "red";
+        extractedGuidelineText = "";
+      }
+    });
+
+    // [이벤트] 2. 교사 평가계획서 파일 업로드 시 텍스트 추출
+    fileInput.addEventListener('change', async function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      resultBox.innerHTML = "<div style='color: blue; text-align: center;'>📄 평가계획서를 읽는 중입니다...</div>";
+      currentExtractedText = "";
+      
+      try {
+        currentExtractedText = await extractTextFromFile(file);
+        if(currentExtractedText.trim() === "") throw new Error("스캔본(이미지) 파일은 텍스트를 추출할 수 없습니다.");
+        
+        resultBox.innerHTML = `
+          <h3 style="color: #2c3e50;">[파일 텍스트 추출 완료]</h3>
+          <p>✅ 파일명: ${file.name}</p>
+          <p>✅ 아래 버튼을 눌러 AI 검토를 시작하세요.</p>
+        `;
+        aiSection.style.display = "block";
+        pdfSection.style.display = "block";
+      } catch (error) {
+        resultBox.innerHTML = `<div style='color: red;'>❌ 파일 읽기 오류: ${error.message}</div>`;
+        aiSection.style.display = "none";
+      }
+    });
+
+    // [이벤트] 3. AI 심층 검토 요청
+    aiBtn.addEventListener('click', () => {
+      // 💡 파일에서 추출한 규정 텍스트 + 직접 입력한 규정 텍스트 통합
+      const manualGuidelineText = document.getElementById('guideline-text').value;
+      const finalGuidelineData = `[지침 파일 내용]: ${extractedGuidelineText}\n\n[추가 지침 내용]: ${manualGuidelineText}`;
+      
+      const extraPromptValue = document.getElementById('extra-prompt').value;
+      
+      loadingOverlay.style.display = 'flex';
+      aiBtn.disabled = true;
+
+      fetch(GAS_WEBAPP_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          textData: currentExtractedText,
+          guidelineData: finalGuidelineData, // 통합된 지침 데이터를 전송
+          extraPrompt: extraPromptValue
+        }),
+        redirect: 'follow'
+      })
+      .then(response => response.json())
+      .then(data => {
+        loadingOverlay.style.display = 'none';
+        if (data.status === "success") {
+          aiBtn.innerText = "✅ AI 심층 검토 완료";
+          const formattedAiResult = data.aiResult.replace(/\n/g, "<br>");
+          const aiHtmlBox = `
+            <hr style="border-color: #27ae60; margin: 25px 0; border-width: 2px;">
+            <div><b style="color: #27ae60; font-size: 18px;">🤖 AI 심층 검토 결과</b></div>
+            <div style="background-color: #1e2227; padding: 20px; border-radius: 8px; margin-top: 15px; color: #d19a66; font-size: 15px; line-height: 1.6;">
+              ${formattedAiResult}
+            </div>
+          `;
+          resultBox.innerHTML += aiHtmlBox;
+          window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        } else {
+          alert("❌ 서버 처리 오류: " + data.message);
+          aiBtn.innerText = "🤖 다시 요청하기";
+          aiBtn.disabled = false;
+        }
+      })
+      .catch(error => {
+        loadingOverlay.style.display = 'none';
+        alert("❌ 전송 실패: 네트워크 상태를 확인해 주세요.");
+        aiBtn.disabled = false;
+      });
+    });
+
+    // [이벤트] 4. PDF 다운로드 로직
+    pdfBtn.addEventListener('click', () => {
+      const element = document.getElementById('result-box');
+      const originalText = pdfBtn.innerText;
+      pdfBtn.innerText = "⏳ PDF 생성 중...";
+      pdfBtn.disabled = true;
+      html2pdf().set({
+        margin: 10, filename: '평가계획서_AI검토결과.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2 },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      }).from(element).save().then(() => {
+        pdfBtn.innerText = originalText;
+        pdfBtn.disabled = false;
+      });
+    });
+  </script>
+</body>
+</html>
